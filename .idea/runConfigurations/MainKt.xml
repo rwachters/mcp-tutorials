@@ -1,0 +1,12 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="MainKt" type="JetRunConfigurationType" nameIsGenerated="true">
+    <option name="MAIN_CLASS_NAME" value="eu.torvian.mcp.tutorials.part1.MainKt" />
+    <module name="mcp-tutorials.part1.main" />
+    <option name="PROGRAM_PARAMETERS" value="java -jar mcp-hello-world-server.jar" />
+    <shortenClasspath name="NONE" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>
