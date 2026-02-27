@@ -1,17 +1,73 @@
 package eu.torvian.mcp.tutorials.part1
 
-import io.modelcontextprotocol.kotlin.sdk.Implementation
-import io.modelcontextprotocol.kotlin.sdk.TextContent
-import io.modelcontextprotocol.kotlin.sdk.Tool
+import io.modelcontextprotocol.kotlin.sdk.types.Implementation
+import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.client.Client
 import io.modelcontextprotocol.kotlin.sdk.client.StdioClientTransport
+import io.modelcontextprotocol.kotlin.sdk.types.Tool
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.io.asSink
 import kotlinx.io.asSource
 import kotlinx.io.buffered
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.collections.iterator
+import java.io.InputStream
+import java.io.OutputStream
+
+/**
+ * A wrapper around InputStream that logs all bytes read from the stream.
+ */
+class LoggingInputStream(private val inputStream: InputStream, private val label: String = "INPUT") : InputStream() {
+    override fun read(): Int {
+        val byte = inputStream.read()
+        if (byte != -1) {
+            print("[$label] ${byte.toChar()}")
+        }
+        return byte
+    }
+
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        val bytesRead = inputStream.read(b, off, len)
+        if (bytesRead > 0) {
+            val data = String(b, off, bytesRead, Charsets.UTF_8)
+            println("[$label] $data")
+        }
+        return bytesRead
+    }
+
+    override fun close() {
+        inputStream.close()
+    }
+
+    override fun available(): Int = inputStream.available()
+}
+
+/**
+ * A wrapper around OutputStream that logs all bytes written to the stream.
+ */
+class LoggingOutputStream(private val outputStream: OutputStream, private val label: String = "OUTPUT") : OutputStream() {
+    override fun write(b: Int) {
+        print("[$label] ${b.toChar()}")
+        outputStream.write(b)
+    }
+
+    override fun write(b: ByteArray, off: Int, len: Int) {
+        val data = String(b, off, len, Charsets.UTF_8)
+        println("[$label] $data")
+        outputStream.write(b, off, len)
+    }
+
+    override fun flush() {
+        outputStream.flush()
+    }
+
+    override fun close() {
+        outputStream.close()
+    }
+}
 
 /**
  * This class represents a generalized MCP (Model Context Protocol) Client in Kotlin
@@ -48,20 +104,27 @@ class StdioMcpClient : AutoCloseable {
             // Start the server application as a new subprocess.
             println("Client: Starting server process: ${fullCommand.joinToString(" ")}")
             val processBuilder = ProcessBuilder(fullCommand)
-//                .redirectErrorStream(true) // Redirect server's stderr to client's stdout for debugging
 
             // Apply environment variables
             processBuilder.environment().putAll(config.env)
 
-            serverProcess = processBuilder.start()
+            serverProcess = withContext(Dispatchers.IO) {
+                processBuilder.start()
+            }
             println("Client: Server process started with PID: ${serverProcess?.pid()}")
+
+            // Wrap streams with logging to capture raw input/output
+            val loggingInputStream = LoggingInputStream(serverProcess!!.inputStream, "SERVER->CLIENT")
+            val loggingOutputStream = LoggingOutputStream(serverProcess!!.outputStream, "CLIENT->SERVER")
+            val loggingErrorStream = LoggingInputStream(serverProcess!!.errorStream, "SERVER->CLIENT (ERROR)")
 
             // Setup STDIO (Standard Input/Output) transport.
             // This transport uses the input and output streams of the launched subprocess
             // to send and receive MCP messages.
             val transport = StdioClientTransport(
-                input = serverProcess!!.inputStream.asSource().buffered(),  // Client reads server's stdout.
-                output = serverProcess!!.outputStream.asSink().buffered(), // Client writes to server's stdin.
+                input = loggingInputStream.asSource().buffered(),  // Client reads server's stdout.
+                output = loggingOutputStream.asSink().buffered(), // Client writes to server's stdin.
+                error = loggingErrorStream.asSource().buffered() // Client reads server's stderr.
             )
             // Connect the MCP client instance to the configured transport.
             // This initiates the MCP handshake and establishes the communication session.
@@ -109,38 +172,40 @@ class StdioMcpClient : AutoCloseable {
             // A real-world client would use a full JSON Schema parser and potentially
             // a more sophisticated UI for argument input (e.g., number fields, dropdowns, etc.).
             val arguments = mutableMapOf<String, Any?>() // Use Any? to allow different types if expanded
-            val inputSchemaProperties: JsonObject = tool.inputSchema.properties
+            val inputSchemaProperties: JsonObject? = tool.inputSchema.properties
             val requiredArguments = tool.inputSchema.required ?: emptyList()
 
-            for ((propName, propSchemaJsonElement) in inputSchemaProperties) {
-                // Ensure propSchemaJsonElement is a JsonObject if it represents a schema definition
-                val propSchema = propSchemaJsonElement as? JsonObject ?: continue
-                val propType = (propSchema["type"] as? JsonPrimitive)?.content
-                val propDescription = (propSchema["description"] as? JsonPrimitive)?.content
-                val isRequired = requiredArguments.contains(propName)
+            if (inputSchemaProperties != null) {
+                for ((propName, propSchemaJsonElement) in inputSchemaProperties) {
+                    // Ensure propSchemaJsonElement is a JsonObject if it represents a schema definition
+                    val propSchema = propSchemaJsonElement as? JsonObject ?: continue
+                    val propType = (propSchema["type"] as? JsonPrimitive)?.content
+                    val propDescription = (propSchema["description"] as? JsonPrimitive)?.content
+                    val isRequired = requiredArguments.contains(propName)
 
-                // Simple handling for string types.
-                // For other types (number, boolean, object, array), a more sophisticated
-                // input mechanism and parsing would be needed.
-                if (propType == "string") {
-                    print("> Enter value for '$propName' (string, ${if (isRequired) "REQUIRED" else "OPTIONAL"}${propDescription?.let { " - $it" } ?: ""}): ")
-                    val value = readlnOrNull() ?: ""
-                    if (value.isNotBlank() || !isRequired) {
-                        arguments[propName] = value
-                    } else if (value.isBlank()) {
-                        println("Error: Required argument '$propName' cannot be empty. Skipping tool call.")
-                        // If a required argument is empty, we cannot proceed meaningfully.
-                        // For this example, we'll break and re-ask for tool name.
-                        return // Skip this entire tool invocation
+                    // Simple handling for string types.
+                    // For other types (number, boolean, object, array), a more sophisticated
+                    // input mechanism and parsing would be needed.
+                    if (propType == "string") {
+                        print("> Enter value for '$propName' (string, ${if (isRequired) "REQUIRED" else "OPTIONAL"}${propDescription?.let { " - $it" } ?: ""}): ")
+                        val value = readlnOrNull() ?: ""
+                        if (value.isNotBlank() || !isRequired) {
+                            arguments[propName] = value
+                        } else if (value.isBlank()) {
+                            println("Error: Required argument '$propName' cannot be empty. Skipping tool call.")
+                            // If a required argument is empty, we cannot proceed meaningfully.
+                            // For this example, we'll break and re-ask for tool name.
+                            return // Skip this entire tool invocation
+                        }
+                    } else {
+                        println("Warning: Argument '$propName' has type '$propType', which is not interactively supported by this client yet.")
+                        if (isRequired) {
+                            println("Error: Required argument '$propName' cannot be provided. Skipping tool call.")
+                            return // Skip this entire tool invocation
+                        }
+                        // For now, skip unsupported types or add a placeholder.
+                        // A real client would need to parse full JSON schema for complex types.
                     }
-                } else {
-                    println("Warning: Argument '$propName' has type '$propType', which is not interactively supported by this client yet.")
-                    if (isRequired) {
-                        println("Error: Required argument '$propName' cannot be provided. Skipping tool call.")
-                        return // Skip this entire tool invocation
-                    }
-                    // For now, skip unsupported types or add a placeholder.
-                    // A real client would need to parse full JSON schema for complex types.
                 }
             }
 
@@ -149,11 +214,11 @@ class StdioMcpClient : AutoCloseable {
             // and waits for the server's `CallToolResult`.
             val result = mcp.callTool(name = toolName, arguments = arguments)
             // Process and print the text content from the tool's response.
-            val resultText = result?.content
-                ?.filterIsInstance<TextContent>() // Filter for text content objects.
-                ?.joinToString("\n") { it.text.toString() } // Extract the text.
+            val resultText = result.content
+                .filterIsInstance<TextContent>() // Filter for text content objects.
+                .joinToString("\n") { it.text } // Extract the text.
 
-            if (result?.isError == true) {
+            if (result.isError == true) {
                 println("Server responded with an ERROR during tool execution:")
                 println("Error Content: $resultText")
                 // If structuredContent contains error details, print it too
