@@ -1,12 +1,14 @@
 [versions]
 kotlin = "2.2.20"
-mcpKotlinSdk = "0.7.3"
+mcpKotlinSdk = "0.8.4"
 kotlinxCoroutines = "1.10.2"
+slf4jSimple = "2.0.9"
 
 [libraries]
 kotlin-stdlib = { module = "org.jetbrains.kotlin:kotlin-stdlib", version.ref = "kotlin" }
 mcp-kotlin-sdk = { module = "io.modelcontextprotocol:kotlin-sdk", version.ref = "mcpKotlinSdk" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
+slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4jSimple" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

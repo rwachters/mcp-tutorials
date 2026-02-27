@@ -11,6 +11,7 @@ dependencies {
     implementation(libs.kotlin.stdlib)
     implementation(libs.mcp.kotlin.sdk)
     implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.slf4j.simple)
 }
 
 application {
@@ -20,6 +21,7 @@ application {
 
 tasks.jar {
     archiveFileName.set("mcp-tutorials-part1.jar")
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     manifest {
         attributes["Main-Class"] = "eu.torvian.mcp.tutorials.part1.MainKt"
     }
@@ -37,7 +39,5 @@ tasks.jar {
         exclude("META-INF/versions/**/module-info.class")
         exclude("module-info.class") // Sometimes it's at the root or other places
     }
-    // You can also set a duplicates strategy, but excluding is often cleaner for these files.
-    // duplicatesStrategy = DuplicatesStrategy.EXCLUDE // This is an alternative if you want to apply globally
 
 }
